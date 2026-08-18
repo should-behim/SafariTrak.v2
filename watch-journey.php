@@ -1,8 +1,6 @@
 <?php
-<<<<<<< HEAD
-=======
+
 require_once __DIR__ . '/backend/includes/auth-guard.php';
->>>>>>> f306403caf68a6f94a499dbe22f06277e8a0db92
 
 require_once __DIR__ . '/backend/config/database.php';
 require_once __DIR__ . '/backend/includes/session.php';

@@ -301,3 +301,90 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
 });
+
+    function locateAndCenter(button, opts = {}) {
+        if (!button) return;
+
+        if (!navigator.geolocation) {
+            button.dataset.originalText = button.dataset.originalText || button.textContent;
+            button.textContent = 'Not supported';
+            setTimeout(() => { button.textContent = button.dataset.originalText; }, 2500);
+            return;
+        }
+
+        const originalText = button.textContent;
+        button.disabled = true;
+        button.textContent = 'Locating…';
+
+        navigator.geolocation.getCurrentPosition(
+            function (pos) {
+                const lat = pos.coords.latitude;
+                const lng = pos.coords.longitude;
+
+                window.setCurrentMarker(lat, lng, pos.coords.accuracy);
+                window.safariMap.setView([lat, lng], 15);
+
+                if (opts.fillDestinationInput) {
+                    const destInput = document.getElementById('destination');
+                    if (destInput) {
+                        destInput.value = 'My location (' + lat.toFixed(4) + ', ' + lng.toFixed(4) + ')';
+                        destInput.dataset.lat = lat;
+                        destInput.dataset.lng = lng;
+                    }
+                }
+
+                button.disabled = false;
+                button.textContent = 'Located';
+                setTimeout(() => { button.textContent = originalText; }, 1800);
+            },
+            function (err) {
+                button.disabled = false;
+                button.textContent =
+                    err.code === err.PERMISSION_DENIED ? 'Permission denied' : 'Could not locate';
+                setTimeout(() => { button.textContent = originalText; }, 2500);
+            },
+            { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+        );
+    }
+
+    document.getElementById('locate')?.addEventListener('click', function () {
+        locateAndCenter(this, { fillDestinationInput: true });
+    });
+
+    document.getElementById('myLocation')?.addEventListener('click', function () {
+        locateAndCenter(this);
+    });
+
+
+
+    document.querySelectorAll('[data-shortcut]').forEach(function (btn) {
+        const key = 'safaritrak_shortcut_' + btn.dataset.shortcut;
+
+        btn.addEventListener('click', function () {
+            const saved = localStorage.getItem(key);
+
+            if (saved) {
+                const { lat, lng } = JSON.parse(saved);
+                window.setCurrentMarker(lat, lng, 0);
+                window.safariMap.setView([lat, lng], 15);
+                return;
+            }
+
+            if (!navigator.geolocation) return;
+
+            const originalText = btn.textContent;
+            btn.textContent = 'Saving…';
+
+            navigator.geolocation.getCurrentPosition(function (pos) {
+                localStorage.setItem(key, JSON.stringify({
+                    lat: pos.coords.latitude,
+                    lng: pos.coords.longitude
+                }));
+                window.setCurrentMarker(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
+                window.safariMap.setView([pos.coords.latitude, pos.coords.longitude], 15);
+                btn.textContent = originalText;
+            }, function () {
+                btn.textContent = originalText;
+            });
+        });
+    });

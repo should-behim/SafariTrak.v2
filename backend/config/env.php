@@ -7,9 +7,9 @@ putenv('SAFARITRAK_DB_PASS=');
 
 putenv('SAFARITRAK_MAIL_HOST=smtp.gmail.com');
 putenv('SAFARITRAK_MAIL_PORT=587');
-putenv('SAFARITRAK_MAIL_USERNAME=youraccount@gmail.com');
-putenv('SAFARITRAK_MAIL_PASSWORD=your16charapppassword');
-putenv('SAFARITRAK_MAIL_FROM=youraccount@gmail.com');
+putenv('SAFARITRAK_MAIL_USERNAME=antonymwandiki26@gmail.com');
+putenv('SAFARITRAK_MAIL_PASSWORD=snqa dsmy ffan uwlr');
+putenv('SAFARITRAK_MAIL_FROM=antonymwandiki26@gmail.com');
 putenv('SAFARITRAK_MAIL_FROM_NAME=SafariTrak');
 
 putenv('SAFARITRAK_APP_URL=http://localhost/safaritrak');

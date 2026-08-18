@@ -5,11 +5,6 @@ require_once __DIR__ . '/../../vendor/autoload.php';
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 
-/**
- * Sends an email via Gmail SMTP. Never throws — a mail failure should not
- * block the request that triggered it (e.g. account creation). Returns
- * false and logs the error instead.
- */
 function st_send_mail(string $toEmail, string $toName, string $subject, string $htmlBody, string $textBody = ''): bool {
     $mail = new PHPMailer(true);
 
@@ -40,10 +35,6 @@ function st_send_mail(string $toEmail, string $toName, string $subject, string $
     }
 }
 
-/**
- * Base URL used to build links in emails. Set SAFARITRAK_APP_URL in
- * production; falls back to the current request host for local dev.
- */
 function st_app_url(): string {
     $base = getenv('SAFARITRAK_APP_URL');
     if ($base) {

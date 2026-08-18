@@ -65,7 +65,7 @@ $contactsPreview = $contactsPreviewStmt->fetchAll();
         </div>
       </div>
     </div>
-    
+
     <!-- Top-Right User Profile Dropdown Component -->
     <div class="profile-dropdown-wrap" id="profileDropdownWrap">
       <button type="button" class="avatar-btn" id="profileAvatarBtn" aria-expanded="false" title="Account Menu">
@@ -103,15 +103,15 @@ $contactsPreview = $contactsPreviewStmt->fetchAll();
     <label>READY FOR YOUR NEXT JOURNEY?</label>
     <h2>Where are you going today?</h2>
     <p>Plan your route, track your journey and keep the people you trust connected along the way.</p>
-    <div class="search"><i class="fa-solid fa-magnifying-glass"></i><input id="destination" placeholder="Search a destination..."><button id="locate">Use my location</button></div>
-    <div class="shortcuts"><button type="button">Home</button><button type="button">Work</button><a class="shortcut-link" href="places.php">Nearby places</a></div>
+    <div class="search"><i class="fa-solid fa-magnifying-glass"></i><input id="destination" placeholder="Search a destination..."><button type="button" id="locate">Use my location</button></div>
+    <div class="shortcuts"><button type="button" data-shortcut="home">Home</button><button type="button" data-shortcut="work">Work</button><a class="shortcut-link" href="places.php">Nearby places</a></div>
   </div>
   <div class="hero-note"><i class="fa-solid fa-compass"></i><b>Travel with confidence.</b><span>Navigate. Track. Share. Connect. Stay safe.</span></div>
 </section>
 
 <section class="grid">
   <div class="card map-card">
-    <div class="card-head"><div><label>LIVE MAP</label><h3>Explore your journey</h3></div><button id="myLocation">My location</button></div>
+    <div class="card-head"><div><label>LIVE MAP</label><h3>Explore your journey</h3></div><button type="button" id="myLocation">My location</button></div>
     <div id="map"></div>
     <div class="legend"><span><i class="current"></i>Your location</span><span><i class="destination"></i>Destination</span></div>
   </div>
@@ -173,5 +173,133 @@ $contactsPreview = $contactsPreviewStmt->fetchAll();
 <script src="dashboard.js"></script>
 <script src="notifications-widget.js"></script>
 <script src="dashboard-map.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+
+    // --------------------------------------------------------------
+    // "Use my location" (#locate) and "My location" (#myLocation)
+    // Previously these buttons had no click handler anywhere in the
+    // codebase, so clicking them did nothing. dashboard-map.js
+    // creates window.safariMap and exposes window.setCurrentMarker /
+    // window.fitJourney, so this waits for that to exist and wires
+    // both buttons to it.
+    // --------------------------------------------------------------
+
+    function whenMapReady(callback) {
+        if (window.safariMap && typeof window.setCurrentMarker === 'function') {
+            callback();
+            return;
+        }
+        const check = setInterval(function () {
+            if (window.safariMap && typeof window.setCurrentMarker === 'function') {
+                clearInterval(check);
+                callback();
+            }
+        }, 100);
+        setTimeout(function () { clearInterval(check); }, 8000);
+    }
+
+    function locateAndCenter(button, opts) {
+        opts = opts || {};
+
+        if (!button) return;
+
+        if (!navigator.geolocation) {
+            const original = button.textContent;
+            button.textContent = 'Not supported';
+            setTimeout(function () { button.textContent = original; }, 2500);
+            return;
+        }
+
+        whenMapReady(function () {
+            const original = button.textContent;
+            button.disabled = true;
+            button.textContent = 'Locating…';
+
+            navigator.geolocation.getCurrentPosition(
+                function (pos) {
+                    const lat = pos.coords.latitude;
+                    const lng = pos.coords.longitude;
+
+                    window.setCurrentMarker(lat, lng, pos.coords.accuracy);
+                    window.safariMap.setView([lat, lng], 15);
+
+                    if (opts.fillDestinationInput) {
+                        const destInput = document.getElementById('destination');
+                        if (destInput) {
+                            destInput.value = 'My location (' + lat.toFixed(4) + ', ' + lng.toFixed(4) + ')';
+                            destInput.dataset.lat = lat;
+                            destInput.dataset.lng = lng;
+                        }
+                    }
+
+                    button.disabled = false;
+                    button.textContent = 'Located';
+                    setTimeout(function () { button.textContent = original; }, 1800);
+                },
+                function (err) {
+                    button.disabled = false;
+                    button.textContent = err.code === err.PERMISSION_DENIED
+                        ? 'Permission denied'
+                        : 'Could not locate';
+                    setTimeout(function () { button.textContent = original; }, 2500);
+                },
+                { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+            );
+        });
+    }
+
+    document.getElementById('locate')?.addEventListener('click', function () {
+        locateAndCenter(this, { fillDestinationInput: true });
+    });
+
+    document.getElementById('myLocation')?.addEventListener('click', function () {
+        locateAndCenter(this);
+    });
+
+    // --------------------------------------------------------------
+    // Home / Work shortcuts. There is no saved-places table/endpoint
+    // in this codebase, so this is a client-side stub using
+    // localStorage: first click saves your current position under
+    // that label, later clicks jump straight there. Replace with a
+    // real API call once a saved_places backend exists.
+    // --------------------------------------------------------------
+
+    document.querySelectorAll('[data-shortcut]').forEach(function (btn) {
+        const key = 'safaritrak_shortcut_' + btn.dataset.shortcut;
+
+        btn.addEventListener('click', function () {
+            const saved = localStorage.getItem(key);
+
+            whenMapReady(function () {
+                if (saved) {
+                    const coords = JSON.parse(saved);
+                    window.setCurrentMarker(coords.lat, coords.lng, 0);
+                    window.safariMap.setView([coords.lat, coords.lng], 15);
+                    return;
+                }
+
+                if (!navigator.geolocation) return;
+
+                const original = btn.textContent;
+                btn.textContent = 'Saving…';
+
+                navigator.geolocation.getCurrentPosition(function (pos) {
+                    localStorage.setItem(key, JSON.stringify({
+                        lat: pos.coords.latitude,
+                        lng: pos.coords.longitude
+                    }));
+                    window.setCurrentMarker(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
+                    window.safariMap.setView([pos.coords.latitude, pos.coords.longitude], 15);
+                    btn.textContent = original;
+                }, function () {
+                    btn.textContent = original;
+                });
+            });
+        });
+    });
+
+});
+</script>
 </body>
 </html>
