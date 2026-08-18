@@ -893,7 +893,8 @@ document.addEventListener('DOMContentLoaded', function () {
         setText(
             [
                 'distanceTravelled',
-                'distance-travelled'
+                'distance-travelled',
+                'coveredKm'
             ],
             formatDistance(
                 totalDistance
@@ -908,7 +909,8 @@ document.addEventListener('DOMContentLoaded', function () {
                 [
                     'gpsAccuracy',
                     'gps-accuracy',
-                    'accuracy'
+                    'accuracy',
+                    'locationAccuracy'
                 ],
                 Math.round(
                     accuracy
@@ -936,7 +938,8 @@ document.addEventListener('DOMContentLoaded', function () {
                 [
                     'distanceRemaining',
                     'distance-remaining',
-                    'remainingDistance'
+                    'remainingDistance',
+                    'remainingKm'
                 ],
                 formatDistance(
                     remaining
@@ -1235,7 +1238,12 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         fetch(
-            'backend/api/journey/update-position.php',
+            // FIX: this used to point at
+            // backend/api/journey/update-position.php (singular
+            // "journey"), which does not exist. The real endpoint,
+            // per the project's file tree, is under the plural
+            // backend/api/journeys/ directory.
+            'backend/api/journeys/update-position.php',
             {
                 method:
                     'POST',
@@ -1852,7 +1860,15 @@ document.addEventListener('DOMContentLoaded', function () {
             centreOnCurrentLocation,
 
         stopGPS:
-            stopGPS
+            stopGPS,
+
+        // FIX: exposed so a page that already has its own
+        // confirmation modal (like live-tracking.php's
+        // #endJourneyModal) can end the journey directly, without
+        // triggering this script's separate showConfirmModal()
+        // dialog on top of it.
+        endJourneyDirect:
+            processEndJourney
     };
 
     initialiseMap();

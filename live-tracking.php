@@ -1,786 +1,307 @@
 <?php
-
-require_once __DIR__ . '/backend/config/database.php';
-require_once __DIR__ . '/backend/includes/session.php';
-require_once __DIR__ . '/backend/includes/auth-guard.php';
+require __DIR__ . '/backend/includes/auth-guard.php';
 
 $db = safaritrak_db();
 
-$userId = $_SESSION['user_id'] ?? null;
+$activeStmt = $db->prepare('SELECT * FROM journeys WHERE user_id = ? AND status = "active" LIMIT 1');
+$activeStmt->execute([$currentUser['id']]);
+$activeJourney = $activeStmt->fetch();
 
-if (!$userId) {
-    header('Location: login.php');
-    exit;
+$watchers = [];
+if ($activeJourney) {
+    $watchersStmt = $db->prepare(
+        'SELECT COALESCE(u.full_name, tc.invite_name) AS display_name, tc.contact_user_id, tc.id AS trusted_contact_id
+         FROM journey_shares js
+         JOIN trusted_contacts tc ON tc.id = js.trusted_contact_id
+         LEFT JOIN users u ON u.id = tc.contact_user_id
+         WHERE js.journey_id = ?'
+    );
+    $watchersStmt->execute([$activeJourney['id']]);
+    $watchers = $watchersStmt->fetchAll();
 }
 
-$activeJourney = null;
-
-try {
-    $stmt = $db->prepare("
-        SELECT
-            id,
-            user_id,
-            start_label,
-            start_lat,
-            start_lng,
-            end_label,
-            end_lat,
-            end_lng,
-            transport_mode,
-            status,
-            started_at,
-            current_lat,
-            current_lng,
-            current_speed_kmh,
-            last_location_update
-        FROM journeys
-        WHERE user_id = ?
-        AND status = 'active'
-        ORDER BY id DESC
-        LIMIT 1
-    ");
-
-    $stmt->execute([$userId]);
-
-    $activeJourney = $stmt->fetch(PDO::FETCH_ASSOC);
-
-} catch (Throwable $e) {
-    $activeJourney = null;
-}
-
-$userName =
-    $_SESSION['name'] ??
-    $_SESSION['username'] ??
-    'Traveler';
-
-$userInitial =
-    strtoupper(substr($userName, 0, 1));
-
-$journeyJson = $activeJourney
-    ? json_encode($activeJourney, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP)
-    : 'null';
-
+$watchedStmt = $db->prepare(
+    'SELECT j.id, j.start_label, j.end_label, j.started_at, u.full_name AS traveler_name
+     FROM journeys j
+     JOIN journey_shares js ON js.journey_id = j.id
+     JOIN trusted_contacts tc ON tc.id = js.trusted_contact_id
+     JOIN users u ON u.id = j.user_id
+     WHERE tc.contact_user_id = ? AND tc.status = "confirmed" AND j.status = "active"
+     ORDER BY j.started_at DESC'
+);
+$watchedStmt->execute([$currentUser['id']]);
+$watchedJourneys = $watchedStmt->fetchAll();
 ?>
-
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-
 <head>
-
 <meta charset="UTF-8">
-
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-<title>SafariTrak - Live Tracking</title>
-
-<link
-rel="stylesheet"
-href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
->
-
-<link
-rel="stylesheet"
-href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
->
-
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SafariTrak | Live Tracking</title>
+<link rel="stylesheet" href="dashboard.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
-
-* {
-    box-sizing: border-box;
+/* Locator marker: pulsing "you are here" dot, matching the Google Maps
+   convention rather than a flat circle. */
+.st-locator {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #176b5b;
+    border: 3px solid #fff;
+    box-shadow: 0 2px 8px rgba(0,0,0,.3);
+    position: relative;
 }
-
-body {
-    margin: 0;
-    font-family: Arial, Helvetica, sans-serif;
-    background: #f4f7f6;
-    color: #263238;
-}
-
-.page {
-    min-height: 100vh;
-}
-
-.sidebar {
-    width: 230px;
-    background: #10b981;
-    color: #fff;
-    position: fixed;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    z-index: 1000;
-}
-
-.brand {
-    display: flex;
-    align-items: center;
-    gap: 11px;
-    padding: 25px 22px;
-}
-
-.brand-icon {
-    width: 38px;
-    height: 38px;
-    border-radius: 10px;
-    background: #e5a82c;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.brand-text strong {
-    display: block;
-    font-size: 16px;
-}
-
-.brand-text span {
-    font-size: 9px;
-    opacity: .85;
-}
-
-.nav {
-    padding: 8px 14px;
-}
-
-.nav a {
-    display: flex;
-    align-items: center;
-    gap: 13px;
-    color: #fff;
-    text-decoration: none;
-    padding: 13px 12px;
-    border-radius: 10px;
-    margin-bottom: 3px;
-    font-size: 13px;
-}
-
-.nav a:hover {
-    background: rgba(255,255,255,.1);
-}
-
-.nav a.active {
-    background: rgba(255,255,255,.1);
-    border-left: 3px solid #e5a82c;
-    padding-left: 9px;
-}
-
-.user-area {
+.st-locator::after {
+    content: '';
     position: absolute;
-    left: 20px;
-    right: 20px;
-    bottom: 20px;
-}
-
-.user-area:before {
-    content: "";
-    display: block;
-    height: 1px;
-    background: rgba(255,255,255,.18);
-    margin-bottom: 15px;
-}
-
-.user-profile {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.user-avatar {
-    width: 35px;
-    height: 35px;
+    inset: -12px;
     border-radius: 50%;
-    background: #e6f1ee;
-    color: #0e9871;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: bold;
+    background: rgba(23,107,91,.25);
+    animation: st-locator-pulse 2s ease-out infinite;
+}
+@keyframes st-locator-pulse {
+    0% { transform: scale(0.4); opacity: 1; }
+    100% { transform: scale(1.6); opacity: 0; }
 }
 
-.user-info strong {
-    display: block;
-    font-size: 11px;
+/* Destination marker: a proper map pin instead of a flat dot. */
+.st-pin {
+    width: 26px;
+    height: 34px;
+    position: relative;
+    transform: translateY(-4px);
 }
-
-.user-info span {
-    font-size: 9px;
+.st-pin::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 3px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50% 50% 50% 0;
+    background: #d69b2d;
+    border: 3px solid #fff;
+    box-shadow: 0 2px 6px rgba(0,0,0,.35);
+    transform: rotate(-45deg);
 }
-
-.main {
-    margin-left: 230px;
-    width: calc(100% - 230px);
-}
-
-.topbar {
-    height: 75px;
-    background: #fff;
-    border-bottom: 1px solid #e1e7e5;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0 30px;
-}
-
-.title small {
-    color: #10a77e;
-    font-size: 10px;
-    font-weight: bold;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-}
-
-.title h1 {
-    margin: 4px 0 0;
-    font-size: 20px;
-}
-
-.profile-circle {
-    width: 35px;
-    height: 35px;
+.st-pin::after {
+    content: '';
+    position: absolute;
+    top: 6px;
+    left: 9px;
+    width: 8px;
+    height: 8px;
     border-radius: 50%;
-    background: #e1eeeb;
-    color: #0d9874;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: bold;
-}
-
-.content {
-    padding: 25px 30px;
-}
-
-.actions {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 18px;
-}
-
-.action-btn {
-    border: 0;
-    border-radius: 9px;
-    padding: 12px 16px;
-    background: #147968;
-    color: #fff;
-    text-decoration: none;
-    font-size: 12px;
-    font-weight: bold;
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.action-btn:hover {
-    background: #106557;
-}
-
-.action-btn.group {
-    background: #e5a82c;
-    color: #fff;
-}
-
-.action-btn.group:hover {
-    background: #cf9218;
-}
-
-.map-card {
     background: #fff;
-    border: 1px solid #e0e7e4;
-    border-radius: 15px;
-    overflow: hidden;
 }
-
-.map-header {
-    min-height: 70px;
-    padding: 15px 18px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border-bottom: 1px solid #e7ecea;
-}
-
-.map-title {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.map-icon {
-    width: 38px;
-    height: 38px;
-    border-radius: 10px;
-    background: #e9f4f1;
-    color: #117d69;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.map-title h2 {
-    margin: 0;
-    font-size: 15px;
-}
-
-.map-title p {
-    margin: 3px 0 0;
-    color: #899395;
-    font-size: 10px;
-}
-
-.connection {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    font-size: 10px;
-    color: #687477;
-}
-
-.connection-dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: #c94b4b;
-}
-
-.connection-dot.online {
-    background: #10b981;
-}
-
-#map {
-    width: 100%;
-    height: 560px;
-}
-
-.map-info {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    border-top: 1px solid #e7ecea;
-}
-
-.info-box {
-    padding: 15px;
-    border-right: 1px solid #e7ecea;
-}
-
-.info-box:last-child {
-    border-right: 0;
-}
-
-.info-box span {
-    display: block;
-    color: #899395;
-    font-size: 9px;
-    margin-bottom: 5px;
-}
-
-.info-box strong {
-    font-size: 13px;
-}
-
-.no-journey {
-    background: #fff;
-    border: 1px solid #e0e7e4;
-    border-radius: 15px;
-    padding: 50px 30px;
-    text-align: center;
-}
-
-.no-journey-icon {
-    width: 65px;
-    height: 65px;
-    margin: 0 auto 15px;
-    border-radius: 50%;
-    background: #e9f4f1;
-    color: #117d69;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 25px;
-}
-
-.no-journey h2 {
-    margin: 0 0 8px;
-    font-size: 18px;
-}
-
-.no-journey p {
-    color: #7b8789;
-    font-size: 12px;
-    margin-bottom: 20px;
-}
-
-.status-message {
-    position: fixed;
-    left: 50%;
-    top: 90px;
-    transform: translateX(-50%);
-    background: #fff;
-    border: 1px solid #dfe7e4;
-    border-radius: 9px;
-    padding: 11px 15px;
-    font-size: 11px;
-    box-shadow: 0 5px 20px rgba(0,0,0,.08);
-    z-index: 2000;
-    display: none;
-}
-
-@media(max-width:800px) {
-
-    .sidebar {
-        display: none;
-    }
-
-    .main {
-        margin-left: 0;
-        width: 100%;
-    }
-
-    .content {
-        padding: 15px;
-    }
-
-    .actions {
-        flex-direction: column;
-    }
-
-    .action-btn {
-        justify-content: center;
-    }
-
-    #map {
-        height: 450px;
-    }
-
-    .map-info {
-        grid-template-columns: 1fr 1fr;
-    }
-
-    .info-box:nth-child(2) {
-        border-right: 0;
-    }
-
-    .info-box:nth-child(3),
-    .info-box:nth-child(4) {
-        border-top: 1px solid #e7ecea;
-    }
-}
-
 </style>
-
 </head>
-
 <body>
-
-<div class="page">
-
-<aside class="sidebar">
-
-<div class="brand">
-
-<div class="brand-icon">
-<i class="fas fa-route"></i>
-</div>
-
-<div class="brand-text">
-<strong>SafariTrak</strong>
-<span>Travel smarter</span>
-</div>
-
-</div>
-
-<nav class="nav">
-
-<a href="dashboard.php">
-<i class="fas fa-th-large"></i>
-Dashboard
-</a>
-
-<a href="my-journeys.php">
-<i class="fas fa-map-marked-alt"></i>
-My Journeys
-</a>
-
-<a href="live-tracking.php" class="active">
-<i class="fas fa-location-crosshairs"></i>
-Live Tracking
-</a>
-
-<a href="places.php">
-<i class="fas fa-map-pin"></i>
-Places
-</a>
-
-<a href="messages.php">
-<i class="far fa-comment-alt"></i>
-Messages
-</a>
-
-<a href="trusted-contacts.php">
-<i class="fas fa-user-group"></i>
-Trusted Contacts
-</a>
-
-<a href="safety.php">
-<i class="fas fa-shield-halved"></i>
-Safety
-</a>
-
-<a href="settings.php">
-<i class="fas fa-gear"></i>
-Settings
-</a>
-
-<a href="logout.php">
-<i class="fas fa-arrow-right-from-bracket"></i>
-Logout
-</a>
-
-</nav>
-
-<div class="user-area">
-
-<div class="user-profile">
-
-<div class="user-avatar">
-<?= htmlspecialchars($userInitial) ?>
-</div>
-
-<div class="user-info">
-
-<strong>
-<?= htmlspecialchars($userName) ?>
-</strong>
-
-<span>
-Traveler
-</span>
-
-</div>
-
-</div>
-
-</div>
-
+<div class="app">
+<aside class="sidebar" id="sidebar">
+  <div class="brand"><div class="logo"><i class="fa-solid fa-route"></i></div><div><b>SafariTrak</b><small>Travel smarter</small></div></div>
+  <nav>
+    <a href="index.php"><i class="fa-solid fa-grid-2"></i>Dashboard</a>
+    <a href="my-journeys.php"><i class="fa-solid fa-map-location-dot"></i>My Journeys</a>
+    <a class="active" href="live-tracking.php"><i class="fa-solid fa-location-crosshairs"></i>Live Tracking</a>
+    <a href="places.php"><i class="fa-solid fa-map-pin"></i>Places</a>
+    <a href="messages.php"><i class="fa-regular fa-message"></i>Messages<?= $unreadConversationCount > 0 ? " <em>" . $unreadConversationCount . "</em>" : "" ?></a>
+    <a href="trusted-contacts.php"><i class="fa-solid fa-user-group"></i>Trusted Contacts</a>
+    <a href="safety.php"><i class="fa-solid fa-shield-halved"></i>Safety</a>
+  </nav>
+  <div class="bottom">
+    <a href="settings.php"><i class="fa-solid fa-gear"></i>Settings</a>
+    <a href="logout.php"><i class="fa-solid fa-arrow-right-from-bracket"></i>Logout</a>
+    <div class="account"><span><?= st_avatar_inner($currentUser) ?></span><div><b><?= htmlspecialchars($userName) ?></b><small>Traveler</small></div></div>
+  </div>
 </aside>
 
-<main class="main">
-
-<header class="topbar">
-
-<div class="title">
-
-<small>
-Live Tracking
-</small>
-
-<h1>
-Track your journey
-</h1>
-
-</div>
-
-<div class="profile-circle">
-<?= htmlspecialchars($userInitial) ?>
-</div>
-
+<main>
+<header>
+  <button class="menu" id="menu"><i class="fa-solid fa-bars"></i></button>
+  <div><label>ON THE ROAD</label><h1>Live Tracking</h1></div>
+  <div class="head-actions">
+    <div class="notif-wrap">
+      <button type="button" class="notif-bell" id="notifBell"><i class="fa-regular fa-bell"></i><span class="notif-dot" id="notifDot"></span></button>
+      <div class="notif-dropdown" id="notifDropdown">
+        <div class="notif-dropdown-head"><b>Notifications</b><a href="notifications.php">View all</a></div>
+        <div class="notif-list" id="notifDropdownList">
+          <p class="notif-empty">Loading...</p>
+        </div>
+      </div>
+    </div>
+    <div class="avatar"><?= st_avatar_inner($currentUser) ?></div>
+  </div>
 </header>
 
 <div class="content">
 
-<div class="actions">
+<?php if (!$activeJourney): ?>
 
-<a
-href="start-journey.php"
-class="action-btn"
->
+<?php if (!empty($watchedJourneys)): ?>
 
-<i class="fas fa-route"></i>
-
-Start Journey
-
-</a>
-
-<a
-href="group-travel.php"
-class="action-btn group"
->
-
-<i class="fas fa-user-group"></i>
-
-Group Travel
-
-</a>
-
+<div class="page-head">
+  <div><h2>Journeys shared with you</h2><p>You are not travelling right now, but you can watch these live.</p></div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap">
+    <a class="btn-ghost" href="group-travel.php"><i class="fa-solid fa-user-group"></i>Group travel</a>
+    <a class="btn-primary" href="start-journey.php"><i class="fa-solid fa-plus"></i>Start a journey</a>
+  </div>
 </div>
 
-<?php if ($activeJourney): ?>
-
-<div class="map-card">
-
-<div class="map-header">
-
-<div class="map-title">
-
-<div class="map-icon">
-<i class="fas fa-location-dot"></i>
-</div>
-
-<div>
-
-<h2>
-Live Journey Map
-</h2>
-
-<p>
-Your current position and route to the destination
-</p>
-
-</div>
-
-</div>
-
-<div class="connection">
-
-<span
-id="connectionDot"
-class="connection-dot"
-></span>
-
-<span id="trackingStatus">
-Connecting...
-</span>
-
-</div>
-
-</div>
-
-<div id="map"></div>
-
-<div class="map-info">
-
-<div class="info-box">
-
-<span>
-Destination
-</span>
-
-<strong id="destinationName">
-<?= htmlspecialchars($activeJourney['end_label']) ?>
-</strong>
-
-</div>
-
-<div class="info-box">
-
-<span>
-Distance remaining
-</span>
-
-<strong id="distanceRemaining">
-Calculating...
-</strong>
-
-</div>
-
-<div class="info-box">
-
-<span>
-Speed
-</span>
-
-<strong id="currentSpeed">
-0 km/h
-</strong>
-
-</div>
-
-<div class="info-box">
-
-<span>
-Location accuracy
-</span>
-
-<strong id="locationAccuracy">
---
-</strong>
-
-</div>
-
-</div>
-
+<div class="card">
+  <div class="journey-list">
+    <?php foreach ($watchedJourneys as $wj): ?>
+    <a href="live-tracking.php?id=<?= (int) $wj['id'] ?>" class="journey-row" style="display:flex;align-items:center;justify-content:space-between;padding:16px;text-decoration:none;color:inherit;border-bottom:1px solid var(--border,#eee);">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div class="jicon"><i class="fa-solid fa-location-crosshairs"></i></div>
+        <div class="jinfo">
+          <b><?= htmlspecialchars($wj['traveler_name']) ?></b>
+          <small style="display:block;color:var(--muted,#666);margin-top:2px"><?= htmlspecialchars($wj['start_label']) ?> &rarr; <?= htmlspecialchars($wj['end_label']) ?> &middot; Started <?= (new DateTime($wj['started_at']))->format('g:i A') ?></small>
+        </div>
+      </div>
+      <div class="jmeta"><span class="badge active" style="background:#10b981;color:#fff;padding:4px 8px;border-radius:12px;font-size:11px;font-weight:bold;">Live</span></div>
+    </a>
+    <?php endforeach; ?>
+  </div>
 </div>
 
 <?php else: ?>
 
-<div class="no-journey">
-
-<div class="no-journey-icon">
-<i class="fas fa-location-crosshairs"></i>
-</div>
-
-<h2>
-No active journey
-</h2>
-
-<p>
-You do not currently have an active journey. Start a journey to see your live location, route and destination on the map.
-</p>
-
-<a
-href="start-journey.php"
-class="action-btn"
->
-
-<i class="fas fa-route"></i>
-
-Start Journey
-
-</a>
-
-<a
-href="group-travel.php"
-class="action-btn group"
->
-
-<i class="fas fa-user-group"></i>
-
-Group Travel
-
-</a>
-
+<div class="card">
+  <div class="empty" style="margin:21px;flex-wrap:wrap">
+    <i class="fa-solid fa-location-crosshairs"></i>
+    <div><b>No journey in progress</b><p>Start a journey and your live position, distance covered and safety tools will show up here.</p></div>
+    <div style="display:flex;gap:10px;margin-left:auto">
+      <a class="btn-ghost" href="group-travel.php">Group travel</a>
+      <a class="empty-link" href="start-journey.php">Start a journey</a>
+    </div>
+  </div>
 </div>
 
 <?php endif; ?>
 
+<?php else: ?>
+
+<div class="page-head">
+  <div><h2><?= htmlspecialchars($activeJourney['start_label']) ?> &rarr; <?= htmlspecialchars($activeJourney['end_label']) ?></h2><p>Journey in progress, started at <?= (new DateTime($activeJourney['started_at']))->format('g:i A') ?>.</p></div>
+  <button type="button" class="btn-ghost" data-open-modal="endJourneyModal"><i class="fa-solid fa-circle-stop"></i>End journey</button>
 </div>
 
+<div class="card map-full">
+  <div class="card-head">
+    <div><label>LIVE MAP</label><h3>Your current position</h3></div>
+    <div style="display:flex;align-items:center;gap:14px">
+      <div class="connection-status"><span class="connection-dot" id="connectionDot"></span><span id="trackingStatus">Connecting...</span></div>
+      <button id="myLocationBtn">My location</button>
+    </div>
+  </div>
+  <div id="map"></div>
+  <div class="legend"><span><i class="current"></i>Your location</span><?php if ($activeJourney['end_lat']): ?><span><i class="destination"></i>Destination</span><?php endif; ?></div>
+  <div class="eta-strip">
+    <div class="eta-chip"><label>DISTANCE COVERED</label><strong id="coveredKm">0 km</strong></div>
+    <div class="eta-chip"><label>DISTANCE REMAINING</label><strong id="remainingKm">-</strong></div>
+    <div class="eta-chip"><label>TOTAL DISTANCE</label><strong id="totalKm"><?= $activeJourney['distance_km'] !== null ? number_format((float) $activeJourney['distance_km'], 1) . ' km' : 'Unknown' ?></strong></div>
+    <div class="eta-chip"><label>STARTED</label><strong><?= (new DateTime($activeJourney['started_at']))->format('g:i A') ?></strong></div>
+    <div class="eta-chip"><label>CURRENT SPEED</label><strong id="currentSpeed">-</strong></div>
+    <div class="eta-chip"><label>LOCATION ACCURACY</label><strong id="locationAccuracy">-</strong></div>
+  </div>
+</div>
+
+<section class="lower">
+  <div class="card">
+    <div class="card-head"><div><label>WATCHING THIS JOURNEY</label><h3>People tracking you</h3></div><a href="trusted-contacts.php">Manage</a></div>
+    <div class="rows contacts">
+      <?php if (empty($watchers)): ?>
+      <p class="hint" style="padding:16px 21px;color:var(--muted);font-size:11px">You did not share this journey with anyone.</p>
+      <?php endif; ?>
+      <?php foreach ($watchers as $w): ?>
+      <div><span class="person"><?= htmlspecialchars(st_initials($w['display_name'])) ?></span><div><b><?= htmlspecialchars($w['display_name']) ?></b><small>&#9679; <?= $w['contact_user_id'] ? 'Watching now' : 'Invited, not on SafariTrak yet' ?></small></div>
+        <?php if ($w['contact_user_id']): ?><a class="msg-link" href="messages.php?to=<?= (int) $w['contact_user_id'] ?>"><i class="fa-regular fa-message"></i></a><?php endif; ?>
+        <button type="button" class="btn-ghost stop-sharing-btn" data-contact-id="<?= (int) $w['trusted_contact_id'] ?>" style="color:#c94b4b;padding:6px 9px;font-size:9px">Stop</button>
+      </div>
+      <?php endforeach; ?>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head"><div><label>SAFETY</label><h3>While you travel</h3></div></div>
+    <div class="tip-list">
+      <div class="tip-row"><i class="fa-solid fa-route"></i><div><b>Route deviation alerts are <?= $activeJourney['route_deviation_alert'] ? 'on' : 'off' ?></b><p>You will be notified if you move significantly off the planned route.</p></div></div>
+      <div class="tip-row"><i class="fa-solid fa-triangle-exclamation"></i><div><b>SOS is one tap away</b><p>Use the emergency button on the Safety page if you need urgent help.</p></div></div>
+      <div class="tip-row"><i class="fa-solid fa-gas-pump"></i><div><b>Need a stop along the way?</b><p><a href="places.php" style="color:var(--p);font-weight:700;text-decoration:none">Find nearby hospitals, fuel stations, hotels and more</a></p></div></div>
+    </div>
+  </div>
+</section>
+
+<?php if (!empty($watchedJourneys)): ?>
+<div class="card" style="margin-top:18px">
+  <div class="card-head"><div><label>ALSO WATCHING</label><h3>Journeys shared with you</h3></div></div>
+  <div class="journey-list">
+    <?php foreach ($watchedJourneys as $wj): ?>
+    <a href="live-tracking.php?id=<?= (int) $wj['id'] ?>" class="journey-row" style="display:flex;align-items:center;justify-content:space-between;padding:16px;text-decoration:none;color:inherit;border-bottom:1px solid var(--border,#eee);">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div class="jicon"><i class="fa-solid fa-location-crosshairs"></i></div>
+        <div class="jinfo"><b><?= htmlspecialchars($wj['traveler_name']) ?></b><small style="display:block;color:var(--muted,#666);margin-top:2px"><?= htmlspecialchars($wj['start_label']) ?> &rarr; <?= htmlspecialchars($wj['end_label']) ?></small></div>
+      </div>
+      <div class="jmeta"><span class="badge active" style="background:#10b981;color:#fff;padding:4px 8px;border-radius:12px;font-size:11px;font-weight:bold;">Live</span></div>
+    </a>
+    <?php endforeach; ?>
+  </div>
+</div>
+<?php endif; ?>
+
+<?php endif; ?>
+
+</div>
+<footer>&copy; <?= date('Y') ?> SafariTrak <span>Navigate. Track. Share. Connect. Stay Safe.</span></footer>
 </main>
-
 </div>
 
-<div
-id="statusMessage"
-class="status-message"
-></div>
-
+<?php if ($activeJourney): ?>
+<div class="modal-overlay" id="endJourneyModal" style="z-index:5000">
+  <div class="modal">
+    <div class="modal-head"><div><h3>End this journey?</h3><p>Your trusted contacts will be notified that you have arrived.</p></div><button class="modal-close" type="button" data-close-modal><i class="fa-solid fa-xmark"></i></button></div>
+    <div class="modal-body">
+      <p>Make sure you have safely reached your destination before ending tracking.</p>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="ghost" data-close-modal>Keep travelling</button>
+      <button type="button" class="danger" id="confirmEndJourneyBtn">End journey</button>
+    </div>
+  </div>
+</div>
 <script>
+window.journeyId = <?= (int) $activeJourney['id'] ?>;
 
-window.SAFARITRAK_JOURNEY =
-<?= $journeyJson ?>;
+<?php if ($activeJourney['start_lat'] !== null && $activeJourney['start_lng'] !== null): ?>
+window.startCoordinates = {
+    lat: <?= (float) $activeJourney['start_lat'] ?>,
+    lng: <?= (float) $activeJourney['start_lng'] ?>
+};
+<?php endif; ?>
 
-window.SAFARITRAK_USER_ID =
-<?= (int)$userId ?>;
+<?php if ($activeJourney['end_lat'] !== null && $activeJourney['end_lng'] !== null): ?>
+window.destinationCoordinates = {
+    lat: <?= (float) $activeJourney['end_lat'] ?>,
+    lng: <?= (float) $activeJourney['end_lng'] ?>
+};
+<?php endif; ?>
 
+document.getElementById('confirmEndJourneyBtn')?.addEventListener('click', function () {
+    document.getElementById('endJourneyModal').classList.remove('open');
+    if (window.safariTrakTracking && typeof window.safariTrakTracking.endJourneyDirect === 'function') {
+        window.safariTrakTracking.endJourneyDirect();
+    }
+});
 </script>
+<?php endif; ?>
 
-<script
-src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-></script>
-
-<script src="dashboard-map.js"></script>
-
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="dashboard.js"></script>
+<script src="notifications-widget.js"></script>
+<?php if ($activeJourney): ?>
 <script src="tracking.js"></script>
-
+<?php endif; ?>
 </body>
-
 </html>

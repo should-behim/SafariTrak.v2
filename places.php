@@ -1,373 +1,75 @@
 <?php
-
-require_once __DIR__ . '/backend/config/database.php';
-require_once __DIR__ . '/backend/includes/session.php';
-require_once __DIR__ . '/backend/includes/auth-guard.php';
-
-$userName =
-    $_SESSION['name'] ??
-    $_SESSION['username'] ??
-    'Traveler';
-
-$userInitial =
-    strtoupper(
-        substr($userName, 0, 1)
-    );
-
+require __DIR__ . '/backend/includes/auth-guard.php';
 ?>
-
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-
 <head>
-
 <meta charset="UTF-8">
-
-<meta
-name="viewport"
-content="width=device-width, initial-scale=1.0"
->
-
-<title>SafariTrak - Places</title>
-
-<link
-rel="stylesheet"
-href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
->
-
-<link
-rel="stylesheet"
-href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
->
-
-<style>
-
-* {
-    box-sizing: border-box;
-}
-
-body {
-    margin: 0;
-    font-family: Arial, Helvetica, sans-serif;
-    background: #f4f7f6;
-    color: #263238;
-}
-
-.sidebar {
-    width: 230px;
-    background: #10b981;
-    color: #fff;
-    position: fixed;
-    left: 0;
-    top: 0;
-    bottom: 0;
-}
-
-.brand {
-    display: flex;
-    align-items: center;
-    gap: 11px;
-    padding: 25px 22px;
-}
-
-.brand-icon {
-    width: 38px;
-    height: 38px;
-    border-radius: 10px;
-    background: #e5a82c;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.brand-text strong {
-    display: block;
-}
-
-.brand-text span {
-    font-size: 9px;
-}
-
-.nav {
-    padding: 8px 14px;
-}
-
-.nav a {
-    display: flex;
-    align-items: center;
-    gap: 13px;
-    color: #fff;
-    text-decoration: none;
-    padding: 13px 12px;
-    border-radius: 10px;
-    margin-bottom: 3px;
-    font-size: 13px;
-}
-
-.nav a:hover,
-.nav a.active {
-    background: rgba(255,255,255,.1);
-}
-
-.main {
-    margin-left: 230px;
-}
-
-.topbar {
-    height: 75px;
-    background: #fff;
-    border-bottom: 1px solid #e1e7e5;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 30px;
-}
-
-.title small {
-    color: #10a77e;
-    font-size: 10px;
-    font-weight: bold;
-}
-
-.title h1 {
-    margin: 4px 0 0;
-    font-size: 20px;
-}
-
-.profile-circle {
-    width: 35px;
-    height: 35px;
-    border-radius: 50%;
-    background: #e1eeeb;
-    color: #0d9874;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: bold;
-}
-
-.content {
-    padding: 25px 30px;
-}
-
-.search-card {
-    max-width: 1000px;
-    margin: auto;
-    background: #fff;
-    border: 1px solid #e0e7e4;
-    border-radius: 15px;
-    overflow: hidden;
-}
-
-.search-area {
-    padding: 20px;
-    display: flex;
-    gap: 10px;
-}
-
-.search-area input {
-    flex: 1;
-    padding: 13px;
-    border: 1px solid #dce4e1;
-    border-radius: 9px;
-    font-size: 13px;
-    outline: none;
-}
-
-.search-area button {
-    border: 0;
-    background: #147968;
-    color: #fff;
-    border-radius: 9px;
-    padding: 0 20px;
-    cursor: pointer;
-    font-weight: bold;
-}
-
-#placesMap {
-    width: 100%;
-    height: 550px;
-}
-
-.results {
-    max-height: 300px;
-    overflow-y: auto;
-}
-
-.result {
-    padding: 14px 18px;
-    border-top: 1px solid #e8eceb;
-    cursor: pointer;
-}
-
-.result:hover {
-    background: #f4f8f6;
-}
-
-.result strong {
-    display: block;
-    font-size: 12px;
-}
-
-.result span {
-    display: block;
-    margin-top: 4px;
-    color: #7b8789;
-    font-size: 10px;
-}
-
-@media(max-width:750px) {
-
-    .sidebar {
-        display: none;
-    }
-
-    .main {
-        margin-left: 0;
-    }
-
-    .content {
-        padding: 15px;
-    }
-
-    .search-area {
-        flex-direction: column;
-    }
-
-    .search-area button {
-        padding: 12px;
-    }
-}
-
-</style>
-
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SafariTrak | Places</title>
+<link rel="stylesheet" href="dashboard.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 </head>
-
 <body>
-
-<aside class="sidebar">
-
-<div class="brand">
-
-<div class="brand-icon">
-<i class="fas fa-route"></i>
-</div>
-
-<div class="brand-text">
-<strong>SafariTrak</strong>
-<span>Travel smarter</span>
-</div>
-
-</div>
-
-<nav class="nav">
-
-<a href="dashboard.php">
-<i class="fas fa-th-large"></i>
-Dashboard
-</a>
-
-<a href="my-journeys.php">
-<i class="fas fa-map-marked-alt"></i>
-My Journeys
-</a>
-
-<a href="live-tracking.php">
-<i class="fas fa-location-crosshairs"></i>
-Live Tracking
-</a>
-
-<a href="places.php" class="active">
-<i class="fas fa-map-pin"></i>
-Places
-</a>
-
-<a href="messages.php">
-<i class="far fa-comment-alt"></i>
-Messages
-</a>
-
-<a href="trusted-contacts.php">
-<i class="fas fa-user-group"></i>
-Trusted Contacts
-</a>
-
-<a href="safety.php">
-<i class="fas fa-shield-halved"></i>
-Safety
-</a>
-
-<a href="settings.php">
-<i class="fas fa-gear"></i>
-Settings
-</a>
-
-<a href="logout.php">
-<i class="fas fa-arrow-right-from-bracket"></i>
-Logout
-</a>
-
-</nav>
-
+<div class="app">
+<aside class="sidebar" id="sidebar">
+  <div class="brand"><div class="logo"><i class="fa-solid fa-route"></i></div><div><b>SafariTrak</b><small>Travel smarter</small></div></div>
+  <nav>
+    <a href="index.php"><i class="fa-solid fa-grid-2"></i>Dashboard</a>
+    <a href="my-journeys.php"><i class="fa-solid fa-map-location-dot"></i>My Journeys</a>
+    <a href="live-tracking.php"><i class="fa-solid fa-location-crosshairs"></i>Live Tracking</a>
+    <a class="active" href="places.php"><i class="fa-solid fa-map-pin"></i>Places</a>
+    <a href="messages.php"><i class="fa-regular fa-message"></i>Messages<?= $unreadConversationCount > 0 ? " <em>" . $unreadConversationCount . "</em>" : "" ?></a>
+    <a href="trusted-contacts.php"><i class="fa-solid fa-user-group"></i>Trusted Contacts</a>
+    <a href="safety.php"><i class="fa-solid fa-shield-halved"></i>Safety</a>
+  </nav>
+  <div class="bottom">
+    <a href="settings.php"><i class="fa-solid fa-gear"></i>Settings</a>
+    <a href="logout.php"><i class="fa-solid fa-arrow-right-from-bracket"></i>Logout</a>
+    <div class="account"><span><?= st_avatar_inner($currentUser) ?></span><div><b><?= htmlspecialchars($userName) ?></b><small>Traveler</small></div></div>
+  </div>
 </aside>
 
-<main class="main">
-
-<header class="topbar">
-
-<div class="title">
-
-<small>
-Location Search
-</small>
-
-<h1>
-Places
-</h1>
-
-</div>
-
-<div class="profile-circle">
-<?= htmlspecialchars($userInitial) ?>
-</div>
-
+<main>
+<header>
+  <button class="menu" id="menu"><i class="fa-solid fa-bars"></i></button>
+  <div><label>USEFUL STOPS</label><h1>Places nearby</h1></div>
+  <div class="head-actions">
+    <div class="notif-wrap">
+      <button type="button" class="notif-bell" id="notifBell"><i class="fa-regular fa-bell"></i><span class="notif-dot" id="notifDot"></span></button>
+      <div class="notif-dropdown" id="notifDropdown">
+        <div class="notif-dropdown-head"><b>Notifications</b><a href="notifications.php">View all</a></div>
+        <div class="notif-list" id="notifDropdownList">
+          <p class="notif-empty">Loading...</p>
+        </div>
+      </div>
+    </div>
+    <div class="avatar"><?= st_avatar_inner($currentUser) ?></div>
+  </div>
 </header>
 
 <div class="content">
 
-<div class="search-card">
-
-<div class="search-area">
-
-<input
-type="text"
-id="placeSearch"
-placeholder="Search a place in Kenya..."
-autocomplete="off"
->
-
-<button
-type="button"
-id="searchPlaceBtn"
->
-
-<i class="fas fa-search"></i>
-
-Search
-
-</button>
-
+<div class="page-head">
+  <div><h2>Find what you need along the way</h2><p>Search for hospitals, police stations, fuel, hotels and restaurants near your route.</p></div>
 </div>
 
-<div id="placesMap"></div>
+<div class="search" style="margin-bottom:16px">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input id="placeSearch" placeholder="Search places, e.g. Total fuel station Thika Road">
+  <button id="placeSearchBtn">Search</button>
+</div>
 
-<div
-id="placesResults"
-class="results"
-></div>
+<div class="tabs" id="placeTabs">
+  <button type="button" class="tab active" data-category="all"><i class="fa-solid fa-layer-group"></i> All</button>
+  <button type="button" class="tab" data-category="hospital"><i class="fa-solid fa-kit-medical"></i> Hospitals</button>
+  <button type="button" class="tab" data-category="police"><i class="fa-solid fa-building-shield"></i> Police</button>
+  <button type="button" class="tab" data-category="fuel"><i class="fa-solid fa-gas-pump"></i> Fuel</button>
+  <button type="button" class="tab" data-category="hotel"><i class="fa-solid fa-bed"></i> Hotels</button>
+  <button type="button" class="tab" data-category="restaurant"><i class="fa-solid fa-utensils"></i> Restaurants</button>
+</div>
 
-<<<<<<< HEAD
-=======
 <div class="grid">
   <div class="card map-card">
     <div class="card-head"><div><label>MAP</label><h3>Places near your route</h3></div></div>
@@ -379,19 +81,13 @@ class="results"
     <div class="journey-list" id="placesList"></div>
     <p class="hint" id="placesStatus" style="padding:0 21px 21px;color:var(--muted);font-size:11px">Getting your location...</p>
   </div>
->>>>>>> f306403caf68a6f94a499dbe22f06277e8a0db92
 </div>
 
 </div>
-
+<footer>&copy; <?= date('Y') ?> SafariTrak <span>Navigate. Track. Share. Connect. Stay Safe.</span></footer>
 </main>
+</div>
 
-<<<<<<< HEAD
-<script
-src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-></script>
-
-=======
 <div class="modal-overlay" id="placeDetailModal">
   <div class="modal">
     <div class="modal-head">
@@ -415,12 +111,6 @@ src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="dashboard.js"></script>
 <script src="notifications-widget.js"></script>
->>>>>>> f306403caf68a6f94a499dbe22f06277e8a0db92
 <script src="places.js"></script>
-
 </body>
-<<<<<<< HEAD
-
-=======
->>>>>>> f306403caf68a6f94a499dbe22f06277e8a0db92
 </html>
