@@ -115,7 +115,13 @@ function admin_relative_time(string $dt): string {
   <div class="bottom">
     <a href="index.php"><i class="fa-solid fa-arrow-right-arrow-left"></i>Switch to traveler view</a>
     <a href="logout.php"><i class="fa-solid fa-arrow-right-from-bracket"></i>Logout</a>
-    <div class="account"><span><?= htmlspecialchars(st_initials($myOrg['name'] ?? $userName)) ?></span><div><b><?= htmlspecialchars($myOrg['name'] ?? $userName) ?></b><small>Organization admin</small></div></div>
+    <div class="account">
+      <span><?= st_avatar_inner($currentUser) ?></span>
+      <div>
+        <b><?= htmlspecialchars($userName) ?></b>
+        <small><?= htmlspecialchars($myOrg['name'] ?? 'Organization admin') ?></small>
+      </div>
+    </div>
   </div>
 </aside>
 
@@ -123,7 +129,24 @@ function admin_relative_time(string $dt): string {
 <header>
   <button class="menu" id="menu"><i class="fa-solid fa-bars"></i></button>
   <div><label>ORGANIZATION OVERVIEW</label><h1><?= htmlspecialchars($myOrg['name'] ?? 'Get started') ?></h1></div>
-  <div class="head-actions"><button><i class="fa-regular fa-bell"></i></button><div class="avatar"><?= st_avatar_inner($currentUser) ?></div></div>
+  <div class="head-actions">
+    <div class="notif-wrap">
+      <button type="button" class="notif-bell" id="notifBell">
+        <i class="fa-regular fa-bell"></i>
+        <span class="notif-dot" id="notifDot"></span>
+      </button>
+      <div class="notif-dropdown" id="notifDropdown">
+        <div class="notif-dropdown-head">
+          <b>Notifications</b>
+          <a href="notifications.php">View all</a>
+        </div>
+        <div class="notif-list" id="notifDropdownList">
+          <p class="notif-empty">Loading...</p>
+        </div>
+      </div>
+    </div>
+    <div class="avatar"><?= st_avatar_inner($currentUser) ?></div>
+  </div>
 </header>
 
 <div class="content">
@@ -198,10 +221,11 @@ function admin_relative_time(string $dt): string {
 <?php endif; ?>
 
 </div>
-<footer>&copy; <?= date('Y') ?> SafariTrak <span>Navigate. Track. Share. Connect. Stay Safe.</span></footer>
+<footer><?= '© ' . date('Y') ?> SafariTrak <span>Navigate. Track. Share. Connect. Stay Safe.</span></footer>
 </main>
 </div>
 <script src="dashboard.js"></script>
+<script src="notifications-widget.js"></script>
 <?php if (!$myOrg): ?>
 <script src="org-onboarding.js"></script>
 <?php endif; ?>

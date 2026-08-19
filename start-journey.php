@@ -2,6 +2,7 @@
 require __DIR__ . '/backend/includes/auth-guard.php';
 
 $db = safaritrak_db();
+
 $contactsStmt = $db->prepare(
     'SELECT tc.id, COALESCE(u.full_name, tc.invite_name) AS display_name
      FROM trusted_contacts tc
@@ -11,6 +12,11 @@ $contactsStmt = $db->prepare(
 );
 $contactsStmt->execute([$currentUser['id']]);
 $confirmedContacts = $contactsStmt->fetchAll();
+
+// Fetch unread messages count using receiver_id and read_at NULL check
+$unreadStmt = $db->prepare('SELECT COUNT(*) FROM messages WHERE receiver_id = ? AND read_at IS NULL');
+$unreadStmt->execute([$currentUser['id']]);
+$unreadConversationCount = (int) $unreadStmt->fetchColumn();
 ?>
 <!doctype html>
 <html lang="en">
@@ -156,7 +162,7 @@ $confirmedContacts = $contactsStmt->fetchAll();
 </div>
 
 </div>
-<footer>&copy; <?= date('Y') ?> SafariTrak <span>Navigate. Track. Share. Connect. Stay Safe.</span></footer>
+<footer><?= '© ' . date('Y') ?> SafariTrak <span>Navigate. Track. Share. Connect. Stay Safe.</span></footer>
 </main>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
