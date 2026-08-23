@@ -13,35 +13,20 @@ if (empty($_SESSION['user_id'])) {
 
 $userId = (int) $_SESSION['user_id'];
 $input = st_input();
-$password = (string) ($input['password'] ?? '');
+$messageId = (int) ($input['message_id'] ?? 0);
 
-if ($password === '') {
-    st_json_error('Enter your password to confirm deletion.', 422, [
-        'errors' => ['password' => 'Enter your password to confirm.'],
-    ]);
+if ($messageId <= 0) {
+    st_json_error('Invalid message ID.', 400);
 }
 
 $db = safaritrak_db();
 
-$stmt = $db->prepare('SELECT password_hash, avatar_path FROM users WHERE id = ?');
-$stmt->execute([$userId]);
-$user = $stmt->fetch();
+// Delete the message only if the current user is the sender
+$stmt = $db->prepare('DELETE FROM messages WHERE id = ? AND sender_id = ?');
+$stmt->execute([$messageId, $userId]);
 
-if (!$user || !password_verify($password, $user['password_hash'])) {
-    st_json_error('Incorrect password.', 422, ['errors' => ['password' => 'Incorrect password.']]);
+if ($stmt->rowCount() === 0) {
+    st_json_error('Message not found or permission denied.', 404);
 }
 
-$deleteStmt = $db->prepare('DELETE FROM users WHERE id = ?');
-$deleteStmt->execute([$userId]);
-
-if (!empty($user['avatar_path'])) {
-    $avatarFile = __DIR__ . '/' . ltrim($user['avatar_path'], '/');
-    if (is_file($avatarFile)) {
-        @unlink($avatarFile);
-    }
-}
-
-session_unset();
-session_destroy();
-
-st_json_ok(['redirect' => 'login.php']);
+st_json_ok(['message' => 'Message deleted successfully.']);

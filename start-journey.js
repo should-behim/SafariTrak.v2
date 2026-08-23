@@ -23,6 +23,7 @@ const endIcon = L.divIcon({
 let startMarker = null;
 let endMarker = null;
 let routeLine = null;
+let computedTotalDistanceKm = 0; // Store real OSRM road distance
 
 function setJourneyMarker(kind, lat, lng, popupText) {
   const position = [lat, lng];
@@ -47,22 +48,53 @@ function setJourneyMarker(kind, lat, lng, popupText) {
   drawJourneyRoute();
 }
 
-function drawJourneyRoute() {
+async function drawJourneyRoute() {
   if (startMarker && endMarker) {
-    const points = [startMarker.getLatLng(), endMarker.getLatLng()];
+    const sPos = startMarker.getLatLng();
+    const ePos = endMarker.getLatLng();
 
-    if (routeLine) {
-      routeLine.setLatLngs(points);
-    } else {
-      routeLine = L.polyline(points, { color: '#176b5b', weight: 4, dashArray: '8, 10', opacity: 0.85 }).addTo(journeyMap);
+    try {
+      // Query OSRM road routing instead of drawing straight line
+      const url = `https://router.project-osrm.org/route/v1/driving/${sPos.lng},${sPos.lat};${ePos.lng},${ePos.lat}?overview=full&geometries=geojson`;
+      const response = await fetch(url);
+      const data = await response.json();
+
+      if (data.routes && data.routes.length > 0) {
+        const route = data.routes[0];
+        computedTotalDistanceKm = parseFloat((route.distance / 1000).toFixed(1));
+
+        const routeCoords = route.geometry.coordinates.map(c => [c[1], c[0]]);
+
+        if (routeLine) {
+          routeLine.setLatLngs(routeCoords);
+        } else {
+          routeLine = L.polyline(routeCoords, { color: '#176b5b', weight: 4, opacity: 0.85 }).addTo(journeyMap);
+        }
+
+        journeyMap.fitBounds(L.latLngBounds(routeCoords), { padding: [50, 50] });
+      } else {
+        // Fallback to straight-line if OSRM gives no route
+        drawStraightLineFallback(sPos, ePos);
+      }
+    } catch (err) {
+      console.error('OSRM route fetch error:', err);
+      drawStraightLineFallback(sPos, ePos);
     }
-
-    journeyMap.fitBounds(L.latLngBounds(points), { padding: [50, 50] });
   } else if (startMarker) {
     journeyMap.setView(startMarker.getLatLng(), 14);
   } else if (endMarker) {
     journeyMap.setView(endMarker.getLatLng(), 14);
   }
+}
+
+function drawStraightLineFallback(sPos, ePos) {
+  const points = [sPos, ePos];
+  if (routeLine) {
+    routeLine.setLatLngs(points);
+  } else {
+    routeLine = L.polyline(points, { color: '#176b5b', weight: 4, dashArray: '8, 10', opacity: 0.85 }).addTo(journeyMap);
+  }
+  journeyMap.fitBounds(L.latLngBounds(points), { padding: [50, 50] });
 }
 
 async function geocodeSearch(query) {
@@ -284,6 +316,7 @@ document.getElementById('submitJourney')?.addEventListener('click', async () => 
     end_label: endPoint.value.trim(),
     end_lat: parseFloat(endLatVal),
     end_lng: parseFloat(endLngVal),
+    total_distance_km: computedTotalDistanceKm, // Send accurate road distance to database
     transport_mode: document.getElementById('transportMode').value,
     planned_departure_at: document.getElementById('departureTime').value || null,
     note: document.getElementById('journeyNote').value.trim(),

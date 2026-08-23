@@ -3,9 +3,31 @@ require __DIR__ . '/backend/includes/auth-guard.php';
 
 $db = safaritrak_db();
 
+// 1. Check if user is trying to view a specific shared journey via GET parameter
+$viewJourneyId = isset($_GET['id']) ? (int) $_GET['id'] : 0;
+$viewJourney = null;
+
+if ($viewJourneyId > 0) {
+    $viewStmt = $db->prepare(
+        'SELECT j.*, u.full_name AS traveler_name
+         FROM journeys j
+         JOIN journey_shares js ON js.journey_id = j.id
+         JOIN trusted_contacts tc ON tc.id = js.trusted_contact_id
+         JOIN users u ON u.id = j.user_id
+         WHERE j.id = ? AND tc.contact_user_id = ? AND tc.status = "confirmed" AND j.status = "active"'
+    );
+    $viewStmt->execute([$viewJourneyId, $currentUser['id']]);
+    $viewJourney = $viewStmt->fetch();
+}
+
+// 2. Fetch the user's own active journey
 $activeStmt = $db->prepare('SELECT * FROM journeys WHERE user_id = ? AND status = "active" LIMIT 1');
 $activeStmt->execute([$currentUser['id']]);
 $activeJourney = $activeStmt->fetch();
+
+// Determine target journey (viewing shared takes precedence if ?id= is set, otherwise fall back to own)
+$targetJourney = $viewJourney ?: $activeJourney;
+$isWatcher = $viewJourney ? true : false;
 
 $watchers = [];
 if ($activeJourney) {
@@ -42,8 +64,6 @@ $watchedJourneys = $watchedStmt->fetchAll();
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
-/* Locator marker: pulsing "you are here" dot, matching the Google Maps
-   convention rather than a flat circle. */
 .st-locator {
     width: 20px;
     height: 20px;
@@ -66,7 +86,6 @@ $watchedJourneys = $watchedStmt->fetchAll();
     100% { transform: scale(1.6); opacity: 0; }
 }
 
-/* Destination marker: a proper map pin instead of a flat dot. */
 .st-pin {
     width: 26px;
     height: 34px;
@@ -138,118 +157,124 @@ $watchedJourneys = $watchedStmt->fetchAll();
 
 <div class="content">
 
-<?php if (!$activeJourney): ?>
+<?php if (!$targetJourney): ?>
 
-<?php if (!empty($watchedJourneys)): ?>
-
-<div class="page-head">
-  <div><h2>Journeys shared with you</h2><p>You are not travelling right now, but you can watch these live.</p></div>
-  <div style="display:flex;gap:10px;flex-wrap:wrap">
-    <a class="btn-ghost" href="group-travel.php"><i class="fa-solid fa-user-group"></i>Group travel</a>
-    <a class="btn-primary" href="start-journey.php"><i class="fa-solid fa-plus"></i>Start a journey</a>
-  </div>
-</div>
-
-<div class="card">
-  <div class="journey-list">
-    <?php foreach ($watchedJourneys as $wj): ?>
-    <a href="live-tracking.php?id=<?= (int) $wj['id'] ?>" class="journey-row" style="display:flex;align-items:center;justify-content:space-between;padding:16px;text-decoration:none;color:inherit;border-bottom:1px solid var(--border,#eee);">
-      <div style="display:flex;align-items:center;gap:12px">
-        <div class="jicon"><i class="fa-solid fa-location-crosshairs"></i></div>
-        <div class="jinfo">
-          <b><?= htmlspecialchars($wj['traveler_name']) ?></b>
-          <small style="display:block;color:var(--muted,#666);margin-top:2px"><?= htmlspecialchars($wj['start_label']) ?> &rarr; <?= htmlspecialchars($wj['end_label']) ?> &middot; Started <?= (new DateTime($wj['started_at']))->format('g:i A') ?></small>
-        </div>
-      </div>
-      <div class="jmeta"><span class="badge active" style="background:#10b981;color:#fff;padding:4px 8px;border-radius:12px;font-size:11px;font-weight:bold;">Live</span></div>
-    </a>
-    <?php endforeach; ?>
-  </div>
-</div>
-
-<?php else: ?>
-
-<div class="card">
-  <div class="empty" style="margin:21px;flex-wrap:wrap">
-    <i class="fa-solid fa-location-crosshairs"></i>
-    <div><b>No journey in progress</b><p>Start a journey and your live position, distance covered and safety tools will show up here.</p></div>
-    <div style="display:flex;gap:10px;margin-left:auto">
-      <a class="btn-ghost" href="group-travel.php">Group travel</a>
-      <a class="empty-link" href="start-journey.php">Start a journey</a>
+  <?php if (!empty($watchedJourneys)): ?>
+  <div class="page-head">
+    <div><h2>Journeys shared with you</h2><p>You are not travelling right now, but you can watch these live.</p></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <a class="btn-ghost" href="group-travel.php"><i class="fa-solid fa-user-group"></i>Group travel</a>
+      <a class="btn-primary" href="start-journey.php"><i class="fa-solid fa-plus"></i>Start a journey</a>
     </div>
   </div>
-</div>
 
-<?php endif; ?>
-
-<?php else: ?>
-
-<div class="page-head">
-  <div><h2><?= htmlspecialchars($activeJourney['start_label']) ?> &rarr; <?= htmlspecialchars($activeJourney['end_label']) ?></h2><p>Journey in progress, started at <?= (new DateTime($activeJourney['started_at']))->format('g:i A') ?>.</p></div>
-  <button type="button" class="btn-ghost" data-open-modal="endJourneyModal"><i class="fa-solid fa-circle-stop"></i>End journey</button>
-</div>
-
-<div class="card map-full">
-  <div class="card-head">
-    <div><label>LIVE MAP</label><h3>Your current position</h3></div>
-    <div style="display:flex;align-items:center;gap:14px">
-      <div class="connection-status"><span class="connection-dot" id="connectionDot"></span><span id="trackingStatus">Connecting...</span></div>
-      <button id="myLocationBtn">My location</button>
-    </div>
-  </div>
-  <div id="map"></div>
-  <div class="legend"><span><i class="current"></i>Your location</span><?php if ($activeJourney['end_lat']): ?><span><i class="destination"></i>Destination</span><?php endif; ?></div>
-  <div class="eta-strip">
-    <div class="eta-chip"><label>DISTANCE COVERED</label><strong id="coveredKm">0 km</strong></div>
-    <div class="eta-chip"><label>DISTANCE REMAINING</label><strong id="remainingKm">-</strong></div>
-    <div class="eta-chip"><label>TOTAL DISTANCE</label><strong id="totalKm"><?= $activeJourney['distance_km'] !== null ? number_format((float) $activeJourney['distance_km'], 1) . ' km' : 'Unknown' ?></strong></div>
-    <div class="eta-chip"><label>STARTED</label><strong><?= (new DateTime($activeJourney['started_at']))->format('g:i A') ?></strong></div>
-    <div class="eta-chip"><label>CURRENT SPEED</label><strong id="currentSpeed">-</strong></div>
-    <div class="eta-chip"><label>LOCATION ACCURACY</label><strong id="locationAccuracy">-</strong></div>
-  </div>
-</div>
-
-<section class="lower">
   <div class="card">
-    <div class="card-head"><div><label>WATCHING THIS JOURNEY</label><h3>People tracking you</h3></div><a href="trusted-contacts.php">Manage</a></div>
-    <div class="rows contacts">
-      <?php if (empty($watchers)): ?>
-      <p class="hint" style="padding:16px 21px;color:var(--muted);font-size:11px">You did not share this journey with anyone.</p>
-      <?php endif; ?>
-      <?php foreach ($watchers as $w): ?>
-      <div><span class="person"><?= htmlspecialchars(st_initials($w['display_name'])) ?></span><div><b><?= htmlspecialchars($w['display_name']) ?></b><small>&#9679; <?= $w['contact_user_id'] ? 'Watching now' : 'Invited, not on SafariTrak yet' ?></small></div>
-        <?php if ($w['contact_user_id']): ?><a class="msg-link" href="messages.php?to=<?= (int) $w['contact_user_id'] ?>"><i class="fa-regular fa-message"></i></a><?php endif; ?>
-        <button type="button" class="btn-ghost stop-sharing-btn" data-contact-id="<?= (int) $w['trusted_contact_id'] ?>" style="color:#c94b4b;padding:6px 9px;font-size:9px">Stop</button>
-      </div>
+    <div class="journey-list">
+      <?php foreach ($watchedJourneys as $wj): ?>
+      <a href="live-tracking.php?id=<?= (int) $wj['id'] ?>" class="journey-row" style="display:flex;align-items:center;justify-content:space-between;padding:16px;text-decoration:none;color:inherit;border-bottom:1px solid var(--border,#eee);">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div class="jicon"><i class="fa-solid fa-location-crosshairs"></i></div>
+          <div class="jinfo">
+            <b><?= htmlspecialchars($wj['traveler_name']) ?></b>
+            <small style="display:block;color:var(--muted,#666);margin-top:2px"><?= htmlspecialchars($wj['start_label']) ?> &rarr; <?= htmlspecialchars($wj['end_label']) ?> &middot; Started <?= (new DateTime($wj['started_at']))->format('g:i A') ?></small>
+          </div>
+        </div>
+        <div class="jmeta"><span class="badge active" style="background:#10b981;color:#fff;padding:4px 8px;border-radius:12px;font-size:11px;font-weight:bold;">Live</span></div>
+      </a>
       <?php endforeach; ?>
     </div>
   </div>
+  <?php else: ?>
   <div class="card">
-    <div class="card-head"><div><label>SAFETY</label><h3>While you travel</h3></div></div>
-    <div class="tip-list">
-      <div class="tip-row"><i class="fa-solid fa-route"></i><div><b>Route deviation alerts are <?= $activeJourney['route_deviation_alert'] ? 'on' : 'off' ?></b><p>You will be notified if you move significantly off the planned route.</p></div></div>
-      <div class="tip-row"><i class="fa-solid fa-triangle-exclamation"></i><div><b>SOS is one tap away</b><p>Use the emergency button on the Safety page if you need urgent help.</p></div></div>
-      <div class="tip-row"><i class="fa-solid fa-gas-pump"></i><div><b>Need a stop along the way?</b><p><a href="places.php" style="color:var(--p);font-weight:700;text-decoration:none">Find nearby hospitals, fuel stations, hotels and more</a></p></div></div>
+    <div class="empty" style="margin:21px;flex-wrap:wrap">
+      <i class="fa-solid fa-location-crosshairs"></i>
+      <div><b>No journey in progress</b><p>Start a journey and your live position, distance covered and safety tools will show up here.</p></div>
+      <div style="display:flex;gap:10px;margin-left:auto">
+        <a class="btn-ghost" href="group-travel.php">Group travel</a>
+        <a class="empty-link" href="start-journey.php">Start a journey</a>
+      </div>
     </div>
   </div>
-</section>
+  <?php endif; ?>
 
-<?php if (!empty($watchedJourneys)): ?>
-<div class="card" style="margin-top:18px">
-  <div class="card-head"><div><label>ALSO WATCHING</label><h3>Journeys shared with you</h3></div></div>
-  <div class="journey-list">
-    <?php foreach ($watchedJourneys as $wj): ?>
-    <a href="live-tracking.php?id=<?= (int) $wj['id'] ?>" class="journey-row" style="display:flex;align-items:center;justify-content:space-between;padding:16px;text-decoration:none;color:inherit;border-bottom:1px solid var(--border,#eee);">
-      <div style="display:flex;align-items:center;gap:12px">
-        <div class="jicon"><i class="fa-solid fa-location-crosshairs"></i></div>
-        <div class="jinfo"><b><?= htmlspecialchars($wj['traveler_name']) ?></b><small style="display:block;color:var(--muted,#666);margin-top:2px"><?= htmlspecialchars($wj['start_label']) ?> &rarr; <?= htmlspecialchars($wj['end_label']) ?></small></div>
-      </div>
-      <div class="jmeta"><span class="badge active" style="background:#10b981;color:#fff;padding:4px 8px;border-radius:12px;font-size:11px;font-weight:bold;">Live</span></div>
-    </a>
-    <?php endforeach; ?>
+<?php else: ?>
+
+  <div class="page-head">
+    <div>
+      <h2><?= htmlspecialchars($targetJourney['start_label']) ?> &rarr; <?= htmlspecialchars($targetJourney['end_label']) ?></h2>
+      <p><?= $isWatcher ? 'Tracking ' . htmlspecialchars($targetJourney['traveler_name']) : 'Journey in progress' ?>, started at <?= (new DateTime($targetJourney['started_at']))->format('g:i A') ?>.</p>
+    </div>
+    <?php if (!$isWatcher): ?>
+      <button type="button" class="btn-ghost" data-open-modal="endJourneyModal"><i class="fa-solid fa-circle-stop"></i>End journey</button>
+    <?php endif; ?>
   </div>
-</div>
-<?php endif; ?>
+
+  <div class="card map-full">
+    <div class="card-head">
+      <div><label>LIVE MAP</label><h3><?= $isWatcher ? htmlspecialchars($targetJourney['traveler_name']) . "'s current position" : 'Your current position' ?></h3></div>
+      <div style="display:flex;align-items:center;gap:14px">
+        <div class="connection-status"><span class="connection-dot" id="connectionDot"></span><span id="trackingStatus">Connecting...</span></div>
+        <button id="myLocationBtn">Recenter map</button>
+      </div>
+    </div>
+    <div id="map" style="height: 450px; width: 100%;"></div>
+    <div class="legend">
+      <span><i class="current"></i><?= $isWatcher ? htmlspecialchars($targetJourney['traveler_name']) : 'Your location' ?></span>
+      <?php if ($targetJourney['end_lat']): ?><span><i class="destination"></i>Destination</span><?php endif; ?>
+    </div>
+    <div class="eta-strip">
+      <div class="eta-chip"><label>DISTANCE COVERED</label><strong id="coveredKm">0 km</strong></div>
+      <div class="eta-chip"><label>DISTANCE REMAINING</label><strong id="remainingKm">-</strong></div>
+      <div class="eta-chip"><label>TOTAL DISTANCE</label><strong id="totalKm"><?= $targetJourney['distance_km'] !== null ? number_format((float) $targetJourney['distance_km'], 1) . ' km' : 'Unknown' ?></strong></div>
+      <div class="eta-chip"><label>STARTED</label><strong><?= (new DateTime($targetJourney['started_at']))->format('g:i A') ?></strong></div>
+      <div class="eta-chip"><label>CURRENT SPEED</label><strong id="currentSpeed">-</strong></div>
+      <div class="eta-chip"><label>LOCATION ACCURACY</label><strong id="locationAccuracy">-</strong></div>
+    </div>
+  </div>
+
+  <?php if (!$isWatcher): ?>
+  <section class="lower">
+    <div class="card">
+      <div class="card-head"><div><label>WATCHING THIS JOURNEY</label><h3>People tracking you</h3></div><a href="trusted-contacts.php">Manage</a></div>
+      <div class="rows contacts">
+        <?php if (empty($watchers)): ?>
+        <p class="hint" style="padding:16px 21px;color:var(--muted);font-size:11px">You did not share this journey with anyone.</p>
+        <?php endif; ?>
+        <?php foreach ($watchers as $w): ?>
+        <div><span class="person"><?= htmlspecialchars(st_initials($w['display_name'])) ?></span><div><b><?= htmlspecialchars($w['display_name']) ?></b><small>&#9679; <?= $w['contact_user_id'] ? 'Watching now' : 'Invited, not on SafariTrak yet' ?></small></div>
+          <?php if ($w['contact_user_id']): ?><a class="msg-link" href="messages.php?to=<?= (int) $w['contact_user_id'] ?>"><i class="fa-regular fa-message"></i></a><?php endif; ?>
+          <button type="button" class="btn-ghost stop-sharing-btn" data-contact-id="<?= (int) $w['trusted_contact_id'] ?>" style="color:#c94b4b;padding:6px 9px;font-size:9px">Stop</button>
+        </div>
+        <?php endforeach; ?>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><div><label>SAFETY</label><h3>While you travel</h3></div></div>
+      <div class="tip-list">
+        <div class="tip-row"><i class="fa-solid fa-route"></i><div><b>Route deviation alerts are <?= $targetJourney['route_deviation_alert'] ? 'on' : 'off' ?></b><p>You will be notified if you move significantly off the planned route.</p></div></div>
+        <div class="tip-row"><i class="fa-solid fa-triangle-exclamation"></i><div><b>SOS is one tap away</b><p>Use the emergency button on the Safety page if you need urgent help.</p></div></div>
+        <div class="tip-row"><i class="fa-solid fa-gas-pump"></i><div><b>Need a stop along the way?</b><p><a href="places.php" style="color:var(--p);font-weight:700;text-decoration:none">Find nearby hospitals, fuel stations, hotels and more</a></p></div></div>
+      </div>
+    </div>
+  </section>
+  <?php endif; ?>
+
+  <?php if (!empty($watchedJourneys)): ?>
+  <div class="card" style="margin-top:18px">
+    <div class="card-head"><div><label>ALSO WATCHING</label><h3>Journeys shared with you</h3></div></div>
+    <div class="journey-list">
+      <?php foreach ($watchedJourneys as $wj): ?>
+      <a href="live-tracking.php?id=<?= (int) $wj['id'] ?>" class="journey-row" style="display:flex;align-items:center;justify-content:space-between;padding:16px;text-decoration:none;color:inherit;border-bottom:1px solid var(--border,#eee);">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div class="jicon"><i class="fa-solid fa-location-crosshairs"></i></div>
+          <div class="jinfo"><b><?= htmlspecialchars($wj['traveler_name']) ?></b><small style="display:block;color:var(--muted,#666);margin-top:2px"><?= htmlspecialchars($wj['start_label']) ?> &rarr; <?= htmlspecialchars($wj['end_label']) ?></small></div>
+        </div>
+        <div class="jmeta"><span class="badge active" style="background:#10b981;color:#fff;padding:4px 8px;border-radius:12px;font-size:11px;font-weight:bold;">Live</span></div>
+      </a>
+      <?php endforeach; ?>
+    </div>
+  </div>
+  <?php endif; ?>
 
 <?php endif; ?>
 
@@ -258,7 +283,7 @@ $watchedJourneys = $watchedStmt->fetchAll();
 </main>
 </div>
 
-<?php if ($activeJourney): ?>
+<?php if ($activeJourney && !$isWatcher): ?>
 <div class="modal-overlay" id="endJourneyModal" style="z-index:5000">
   <div class="modal">
     <div class="modal-head"><div><h3>End this journey?</h3><p>Your trusted contacts will be notified that you have arrived.</p></div><button class="modal-close" type="button" data-close-modal><i class="fa-solid fa-xmark"></i></button></div>
@@ -271,20 +296,24 @@ $watchedJourneys = $watchedStmt->fetchAll();
     </div>
   </div>
 </div>
-<script>
-window.journeyId = <?= (int) $activeJourney['id'] ?>;
+<?php endif; ?>
 
-<?php if ($activeJourney['start_lat'] !== null && $activeJourney['start_lng'] !== null): ?>
+<?php if ($targetJourney): ?>
+<script>
+window.journeyId = <?= (int) $targetJourney['id'] ?>;
+window.isWatcher = <?= $isWatcher ? 'true' : 'false' ?>;
+
+<?php if ($targetJourney['start_lat'] !== null && $targetJourney['start_lng'] !== null): ?>
 window.startCoordinates = {
-    lat: <?= (float) $activeJourney['start_lat'] ?>,
-    lng: <?= (float) $activeJourney['start_lng'] ?>
+    lat: <?= (float) $targetJourney['start_lat'] ?>,
+    lng: <?= (float) $targetJourney['start_lng'] ?>
 };
 <?php endif; ?>
 
-<?php if ($activeJourney['end_lat'] !== null && $activeJourney['end_lng'] !== null): ?>
+<?php if ($targetJourney['end_lat'] !== null && $targetJourney['end_lng'] !== null): ?>
 window.destinationCoordinates = {
-    lat: <?= (float) $activeJourney['end_lat'] ?>,
-    lng: <?= (float) $activeJourney['end_lng'] ?>
+    lat: <?= (float) $targetJourney['end_lat'] ?>,
+    lng: <?= (float) $targetJourney['end_lng'] ?>
 };
 <?php endif; ?>
 
@@ -300,7 +329,7 @@ document.getElementById('confirmEndJourneyBtn')?.addEventListener('click', funct
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="dashboard.js"></script>
 <script src="notifications-widget.js"></script>
-<?php if ($activeJourney): ?>
+<?php if ($targetJourney): ?>
 <script src="tracking.js"></script>
 <?php endif; ?>
 </body>
